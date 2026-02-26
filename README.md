@@ -1,350 +1,224 @@
-```md
-# ESP32Temp_HausBusV2 — README (Version 2.1.0)
+ESP32Temp_HausBusV2 (v2.1.0)
+ESP32 + DS18B20 (1‑Wire) + RS485 HausBus + Web‑UI (Access Point).
 
-ESP32 + DS18B20 (1‑Wire) + RS485 HausBus + Web-UI (Access Point).
+Features
+Zyklisches Senden von Temperaturen (Auto‑Send) über RS485
+→ nicht-blockierend (Scheduler/State‑Machine)
+On‑Demand Temperaturabfrage per RS485 (.gSTATUS → .STATUS)
+SYS‑Kommandos per RS485 (z. B. WiFi/Web an/aus)
+Web‑GUI im Access Point (AP) zur Konfiguration & Sensor‑Mapping
+Ping/Alive (Template-basiert) Request/Reply
+RS485 Telegramm-Format (Framing)
+Alle RS485 Payloads sind ASCII und werden gerahmt:
 
-Dieses Projekt kann:
+Start: 0xFD
+Payload: z. B. 1.TMP.2.STATUS.23.75
+End: 0xFE
+Beispiel (Payload):
 
-- Temperaturen **zyklisch** (Auto‑Send) über RS485 senden (**nicht-blockierend**, Scheduler/State-Machine)
-- Temperaturen **auf Anfrage** (On‑Demand) über RS485 beantworten
-- **SYS‑Kommandos** über RS485 verarbeiten (z. B. WiFi/Web an/aus)
-- eine **Web‑GUI** im **Access Point (AP)** bereitstellen (Konfiguration + Sensor‑Mapping)
-- **Ping/Alive** Telegramme (Template-basiert) beantworten
-
----
-
-## Inhalt
-
-- [1. RS485 Telegramm-Format (Framing)](#1-rs485-telegramm-format-framing)
-- [2. RS485 Befehle — Senden (TX)](#2-rs485-befehle--senden-tx)
-- [3. RS485 Befehle — Empfangen (RX) & Reaktion](#3-rs485-befehle--empfangen-rx--reaktion)
-- [4. Web-GUI (AP)](#4-web-gui-ap)
-- [5. Sensor-Instanzen / Mapping (ROM → Instance)](#5-sensor-instanzen--mapping-rom--instance)
-- [6. Persistente Einstellungen (Preferences)](#6-persistente-einstellungen-preferences)
-- [7. Busverhalten / Arbitration](#7-busverhalten--arbitration)
-- [8. Troubleshooting](#8-troubleshooting)
-- [9. Command Cheat Sheet](#9-command-cheat-sheet)
-
----
-
-## 1. RS485 Telegramm-Format (Framing)
-
-Alle RS485-Nachrichten werden **gerahmt**:
-
-- **Start-Byte:** `0xFD`
-- **Payload:** ASCII-Text (z. B. `1.TMP.3.STATUS.21.50`)
-- **End-Byte:** `0xFE`
-
-**Beispiel (Payload):**
-```
-1.TMP.1.STATUS.21.34
-```
-
-**Auf dem Bus (Bytefolge):**
-```
-FD 31 2E 54 4D 50 ... FE
-```
-
-> Wichtig: Der Parser verarbeitet nur Payloads, die korrekt zwischen `0xFD` und `0xFE` ankommen.
-
----
-
-## 2. RS485 Befehle — Senden (TX)
-
-### 2.1 Temperatur-Status (Auto‑Send / zyklisch)
-
-Wenn Auto‑Send aktiv ist, sendet der ESP32 für jeden Sensor:
-
-**Format**
-```
-<DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
-```
-
-- `<DeviceID>`: Geräte-ID des ESP32 (1..9999)
-- `<Inst>`: Sensor-Instanz (1..255), aus Mapping (ROM → Instanz)
-- `<P1>`: Ganzzahlanteil der Temperatur (°C)
-- `<P2>`: Nachkommanteil (0..99), immer positiv
-
-**Beispiel**
-```
 1.TMP.2.STATUS.23.75
-```
-→ Instanz 2 hat **23.75 °C**
+Beispiel (Bytes auf dem Bus):
 
-**Ungültig/Fehler**
-Wenn Temperatur außerhalb plausibler Grenzen ist:
-- `P1 = -127`, `P2 = 0`
+FD 31 2E 54 4D 50 2E 32 2E 53 54 41 54 55 53 2E 32 33 2E 37 35 FE
+RS485 Befehle — Überblick
+Namenskonvention
+<DeviceID>: 1..9999 (konfigurierbar)
+<Inst>: 1..255 (Sensor‑Instanz aus ROM→Instance Mapping)
+Temperaturen werden als P1.P2 gesendet:
+P1 = Ganzzahlanteil (°C)
+P2 = Nachkommanteil (0..99), immer positiv
+RS485 Befehle — Senden (TX)
+1) Temperatur Status (Auto‑Send / zyklisch)
+Wird gesendet, wenn Auto‑Send aktiv ist.
 
----
+Format
 
-### 2.2 Temperatur-Status (Antwort auf Anfrage)
-
-Bei einem On‑Demand Request (siehe RX) antwortet der ESP32 ebenfalls mit:
-
-```
 <DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
-```
+Beispiel
 
----
+1.TMP.2.STATUS.23.75
+Fehlerwert
+Wenn Temperatur außerhalb plausibler Grenzen ist:
 
-### 2.3 SYS rCONFIG (Antwort auf Konfig-Abfrage)
+<DeviceID>.TMP.<Inst>.STATUS.-127.0
+2) Temperatur Status (Antwort auf On‑Demand)
+Antwort auf einen .gSTATUS Request (siehe RX).
 
-Bei einer SYS-Abfrage sendet der ESP32:
+Format
 
-**Format**
-```
+<DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
+3) SYS Konfig Antwort (rCONFIG)
+Antwort auf .gCONFIG (siehe RX).
+
+Format
+
 <DeviceID>.SYS.1.rCONFIG.<P1>.<VALUE>
-```
-
 Aktuell implementiert:
 
-- `P1 = 1` → WiFi/Web **Runtime-Status**
-- `VALUE`:
-  - `1` = AP + Webserver laufen
-  - `0` = aus
+P1 = 1 → WiFi/Web Runtime-Status
+VALUE:
+1 = AP + Webserver laufen
+0 = aus
+Beispiel
 
-**Beispiel**
-```
 1.SYS.1.rCONFIG.1.1
-```
+4) Ping Reply (Template)
+Wenn ein Ping‑Request empfangen wird, sendet der ESP32 einen Reply.
 
----
+Standard‑Templates:
 
-### 2.4 Ping Reply (Template-basiert)
+RX erwartet: DeviceID.OUT.210.gSTATUS
+TX sendet:   DeviceID.OUT.210.rSTATUS
+DeviceID wird dabei automatisch ersetzt.
 
-Wenn ein Ping-Request empfangen wird, sendet der ESP32 einen Ping-Reply.
+Beispiel bei DeviceID=1
 
-Default Templates:
+RX: 1.OUT.210.gSTATUS
+TX: 1.OUT.210.rSTATUS
+RS485 Befehle — Empfangen (RX) & Reaktion
+1) Temperatur anfordern (On‑Demand)
+RX
 
-- RX erwartet: `DeviceID.OUT.210.gSTATUS`
-- TX sendet:   `DeviceID.OUT.210.rSTATUS`
-
-`DeviceID` wird automatisch durch die konfigurierte Geräte-ID ersetzt.
-
-**Beispiel bei DeviceID=1**
-- RX: `1.OUT.210.gSTATUS`
-- TX: `1.OUT.210.rSTATUS`
-
----
-
-## 3. RS485 Befehle — Empfangen (RX) & Reaktion
-
-### 3.1 Temperatur anfordern (On‑Demand)
-
-**RX**
-```
 <DeviceID>.TMP.<Inst>.gSTATUS
-```
+Reaktion (TX)
 
-**Reaktion**
-- ESP32 liest Temperatur des Sensors mit Instanz `<Inst>`
-- TX Antwort:
-  ```
-  <DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
-  ```
+<DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
+Beispiel
 
-**Beispiel**
-- RX:
-  ```
+RX:
   1.TMP.2.gSTATUS
-  ```
-- TX:
-  ```
+TX:
   1.TMP.2.STATUS.23.75
-  ```
+Hinweis: Wenn <Inst> nicht existiert (nicht gemappt), wird nicht geantwortet.
 
-Wenn `<Inst>` nicht gemappt/gefunden wird: **keine Antwort** (wird im Serial Log angezeigt).
+2) SYS: WiFi/Web an/aus (SET_CFG)
+RX
 
----
-
-### 3.2 SYS: WiFi/Web an/aus (SET_CFG)
-
-**RX**
-```
 <DeviceID>.SYS.1.SET_CFG.<P1>.<P2>
-```
+Implementiert:
 
-Aktuell implementiert:
+P1 = 1 → WiFi/Web Enable
+P2 = 0 → OFF
+P2 = 1 → ON
+Beispiele
 
-- `P1 = 1` → WiFi/Web Enable
-- `P2 = 0` → WiFi/Web AUS
-- `P2 = 1` → WiFi/Web AN
-
-**Beispiele**
-- AUS:
-  ```
+OFF:
   1.SYS.1.SET_CFG.1.0
-  ```
-- AN:
-  ```
+ON:
   1.SYS.1.SET_CFG.1.1
-  ```
+Wichtig:
 
-**Hinweis:** Das Umschalten erfolgt “bombproof” im `loop()` (nicht direkt im RX-Handler), um die WiFi-Stack Stabilität zu erhöhen.
+Dieses SET sendet keine direkte Bestätigung.
+Der gewünschte Zustand wird gespeichert und dann sicher im loop() umgeschaltet (stabiler WiFi‑Stack, “bombproof”).
+3) SYS: Konfiguration abfragen (gCONFIG)
+RX
 
----
-
-### 3.3 SYS: Konfiguration abfragen (gCONFIG → rCONFIG)
-
-**RX**
-```
 <DeviceID>.SYS.1.gCONFIG.<P1>
-```
+Implementiert:
 
-**TX**
-```
-<DeviceID>.SYS.1.rCONFIG.<P1>.<VALUE>
-```
+P1 = 1 → WiFi/Web Runtime-Status
+Reaktion (TX)
 
-Aktuell implementiert:
+<DeviceID>.SYS.1.rCONFIG.1.<0|1>
+Beispiel
 
-- `P1 = 1` → WiFi/Web Runtime-Status
-- `VALUE = 1` wenn AP+Webserver laufen, sonst `0`
-
-**Beispiel**
-- RX:
-  ```
+RX:
   1.SYS.1.gCONFIG.1
-  ```
-- TX:
-  ```
-  1.SYS.1.rCONFIG.1.1
-  ```
+TX:
+  1.SYS.1.rCONFIG.1.0
+4) Ping Request (Template)
+RX (Standard)
 
----
-
-### 3.4 Ping Request (Template)
-
-**RX (Default)**
-```
 DeviceID.OUT.210.gSTATUS
-```
+Reaktion (TX Standard)
 
-**TX (Default)**
-```
 DeviceID.OUT.210.rSTATUS
-```
+Beide Templates sind in der GUI konfigurierbar.
 
-Die Templates sind in der GUI konfigurierbar. `DeviceID` wird ersetzt.
-
----
-
-## 4. Web-GUI (AP)
-
+Web-GUI (Access Point)
 Wenn WiFi/Web aktiviert ist, startet der ESP32 einen Access Point:
 
-- **SSID:** `ESP32-TMP-SETUP`
-- **Passwort:** leer (Open AP; im Code setzbar)
-- **IP:** typischerweise `192.168.4.1`
+SSID:ESP32-TMP-SETUP
+Passwort: leer (Open AP; kann im Code gesetzt werden)
+URL:
+http://192.168.4.1/
+ (typisch)
+GUI: Bus Settings
+Konfigurierbar (und persistent gespeichert):
 
-### 4.1 Bus Settings
-
-In der GUI konfigurierbar (und persistent gespeichert):
-
-- **Device ID** (1..9999)
-- **Send interval (ms)** (`0` = aus)
-- **Auto send enabled**
-- **Gap between sensor telegrams (ms)**
-- **Ping response template** (TX)
-- **Ping request template** (RX)
-
-### 4.2 Sensors / Mapping
-
+Device ID (1..9999)
+Send interval (ms) (0 = aus)
+Auto send enabled
+Gap between sensor telegrams (ms)
+Ping request template (RX)
+Ping response template (TX)
+GUI: Sensors / Mapping
 Die GUI zeigt alle gefundenen DS18B20:
 
-- ROM (16 Hex Zeichen)
-- Temperatur (°C)
-- Instance (1..255) editierbar
+ROM (16 Hex Zeichen)
+Temperatur
+Instance (1..255) editierbar
+Damit legst du fest, welche Instanznummer im Bus‑Protokoll verwendet wird.
 
-Damit legst du fest, welche Instanznummer im Bus-Protokoll verwendet wird.
+Sensor-Instanzen / Mapping (ROM → Instance)
+Jeder DS18B20 hat eine eindeutige ROM‑ID.
+Das Projekt speichert ein Mapping ROM → Instance, damit die Instanz stabil bleibt, auch wenn sich die Reihenfolge am 1‑Wire Bus ändert.
 
----
+Persistente Einstellungen (Preferences)
+Gespeichert im ESP32 NVS (Namespace tmpcfg):
 
-## 5. Sensor-Instanzen / Mapping (ROM → Instance)
-
-Jeder DS18B20 hat eine eindeutige ROM-ID.  
-Das Projekt speichert ein Mapping **ROM → Instance**, damit die Instanz stabil bleibt, auch wenn sich die Reihenfolge am 1‑Wire Bus ändert.
-
----
-
-## 6. Persistente Einstellungen (Preferences)
-
-Gespeichert im ESP32 NVS (Preferences, Namespace `tmpcfg`):
-
-- `dev_id` (DeviceID)
-- `tx_ms` (Intervall)
-- `auto_en` (Auto-Send)
-- `gap_ms` (Gap)
-- `wifi_en` (WiFi/Web desired)
-- `ping_tx`, `ping_rx` (Ping Templates)
-- ROM→Instance Mapping (intern über Hash-Key)
-
----
-
-## 7. Busverhalten / Arbitration
-
+dev_id → DeviceID
+tx_ms → Intervall
+auto_en → Auto‑Send
+gap_ms → Gap
+wifi_en → WiFi/Web desired
+ping_tx, ping_rx → Ping Templates
+ROM→Instance Mapping (intern über Hash‑Key)
+Busverhalten / Arbitration (wichtig bei RS485)
 Um Kollisionen zu reduzieren:
 
-- Bus-Idle-Erkennung über Zeit seit letztem RX-Byte
-- Random Backoff vor dem Senden
-- Holdoff nach Antworten (SYS/Ping/On-Demand), damit Auto-Send nicht sofort dazwischenfunkt
+Bus‑Idle Erkennung (Zeit seit letztem RX‑Byte)
+Random Backoff vor dem Senden
+Holdoff nach Antworten (SYS/Ping/On‑Demand), damit Auto‑Send nicht sofort dazwischenfunkt
+Troubleshooting
+Webserver/AP nicht erreichbar
+Per RS485 prüfen:
+RX:
+     <DeviceID>.SYS.1.gCONFIG.1
+TX:
+     <DeviceID>.SYS.1.rCONFIG.1.<0|1>
+Serial Logs prüfen:
+[WIFI] AP start OK | IP: 192.168.4.1
+[WEB] started
+Keine Antwort auf .gSTATUS
+Instanz existiert? (GUI → Sensorliste / Mapping)
+Sensoren gefunden? ([DS18B20] found devices: ...)
+Framing korrekt? (0xFD ... 0xFE)
+Command Cheat Sheet
+Temperatur (On‑Demand)
+Request (RX)
 
----
+<DeviceID>.TMP.<Inst>.gSTATUS
+Reply (TX)
 
-## 8. Troubleshooting
+<DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
+SYS WiFi/Web
+Set OFF (RX)
 
-### Webserver nicht erreichbar
-- Per RS485 prüfen:
-  - RX: `<DeviceID>.SYS.1.gCONFIG.1`
-  - TX: `<DeviceID>.SYS.1.rCONFIG.1.<0|1>`
-- Serial Logs prüfen:
-  - `[WIFI] AP start OK | IP: 192.168.4.1`
-  - `[WEB] started`
+<DeviceID>.SYS.1.SET_CFG.1.0
+Set ON (RX)
 
-### Keine Antwort auf `.gSTATUS`
-- Instanz existiert? (GUI → Sensorliste)
-- Sensoren gefunden? (`[DS18B20] found devices: ...`)
-- Framing korrekt? (`0xFD ... 0xFE`)
+<DeviceID>.SYS.1.SET_CFG.1.1
+Get (RX)
 
----
+<DeviceID>.SYS.1.gCONFIG.1
+Reply (TX)
 
-## 9. Command Cheat Sheet
+<DeviceID>.SYS.1.rCONFIG.1.<0|1>
+Ping (Default Templates)
+Request (RX)
 
-### Temperatur (On-Demand)
-- **Request (RX):**
-  ```
-  <DeviceID>.TMP.<Inst>.gSTATUS
-  ```
-- **Reply (TX):**
-  ```
-  <DeviceID>.TMP.<Inst>.STATUS.<P1>.<P2>
-  ```
+<DeviceID>.OUT.210.gSTATUS
+Reply (TX)
 
-### SYS WiFi/Web
-- **Set OFF (RX):**
-  ```
-  <DeviceID>.SYS.1.SET_CFG.1.0
-  ```
-- **Set ON (RX):**
-  ```
-  <DeviceID>.SYS.1.SET_CFG.1.1
-  ```
-- **Get (RX):**
-  ```
-  <DeviceID>.SYS.1.gCONFIG.1
-  ```
-- **Reply (TX):**
-  ```
-  <DeviceID>.SYS.1.rCONFIG.1.<0|1>
-  ```
-
-### Ping (Default Templates)
-- **Request (RX):**
-  ```
-  <DeviceID>.OUT.210.gSTATUS
-  ```
-- **Reply (TX):**
-  ```
-  <DeviceID>.OUT.210.rSTATUS
-  ```
-```
+<DeviceID>.OUT.210.rSTATUS
