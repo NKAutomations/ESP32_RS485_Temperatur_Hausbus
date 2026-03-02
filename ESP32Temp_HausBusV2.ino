@@ -94,7 +94,7 @@ static bool   g_inFrame = false;
 static String g_rxBuf;
 
 // ---------------- Timing ----------------
-static const uint32_t RS485_BAUD = 56700;
+static const uint32_t RS485_BAUD = 57600;
 
 static inline uint32_t charTimeMicros() { return (uint32_t)(10000000UL / RS485_BAUD); }
 static const uint32_t BUS_IDLE_CHARS = 6;
@@ -1052,7 +1052,7 @@ void setup() {
                 (unsigned)g_deviceId, (unsigned)g_txMs, (unsigned)(g_autoEn ? 1 : 0),
                 (unsigned)g_gapMs, (unsigned)(g_wifiDesired ? 1 : 0));
 
-  Serial2.begin(RS485_BAUD, SERIAL_8N1, RS485_RX, RS485_TX);
+  Serial2.begin(RS485_BAUD, SERIAL_8E1, RS485_RX, RS485_TX);
   Serial.println("[RS485] Serial2 started");
 
   randomSeed((uint32_t)esp_random());
